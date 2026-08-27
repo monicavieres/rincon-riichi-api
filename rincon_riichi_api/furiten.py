@@ -32,11 +32,19 @@ def generate_furiten(
 ) -> dict:
     """Generate a four-player furiten drill.
 
+    The scenario is produced by simulating a slice of real play. The subject
+    holds a verified tenpai concealed hand; a live wall is dealt and turns are
+    walked (draw → discard) in seat order. When a player makes an open call
+    (pon/chi/kan) the called tile leaves the discarder's pond and the turn moves
+    past the caller, so pond sizes differ naturally. Tiles are always drawn from
+    a :class:`~rincon_riichi_api.tiles.TileDeck`, so no tile exceeds four copies.
+
     Returns a dict:
       ``hand``        subject's 13-tile tenpai concealed hand (sorted)
       ``waits``       the exact winning tiles for the subject hand
-      ``discards``    ``{wind: [tile,...]}`` per player (subject's own pond
-                      deliberately contains (or omits) every wait tile)
+      ``discards``    ``{wind: [tile,...]}`` per player, consistent with the
+                      simulated turn order (subject's own pond is adjusted so it
+                      contains (or omits) every wait tile as requested)
       ``calls``       list of exposed melds with caller / source / tiles /
                       ``closed`` flag (empty when no calls)
       ``main_seat``   the subject wind
@@ -54,13 +62,11 @@ def generate_furiten(
     if wait_type is None or wait_type not in _VALID_KEYS:
         wait_type = random.choice(_VALID_KEYS)
 
-    deck = TileDeck(with_honors=True, include_aka=True)
-
     for _ in range(max_attempts):
+        deck = TileDeck(with_honors=True, include_aka=True)
         # 1. Build a verified tenpai concealed hand and take its tiles.
         build = build_wait_hand(waits_for=wait_type, deck=deck)
         if build is None:
-            deck = TileDeck(with_honors=True, include_aka=True)
             wait_type = random.choice(_VALID_KEYS)
             continue
         hand, waits, label = build
@@ -68,33 +74,17 @@ def generate_furiten(
         if not waits:
             continue
 
-        # 2. Deal the other three players' concealed hands from the deck.
-        others = [w for w in _SEATS if w != subject_seat]
-        hands: dict[str, list[str]] = {subject_seat: hand}
-        ok = True
-        for seat in others:
-            tiles = deck.take_random(13)
-            if len(tiles) != 13:
-                ok = False
-                break
-            hands[seat] = tiles
-        if not ok:
+        # 2. Simulate a slice of play: draws + discards in seat order, with
+        #    open calls that skip turns (all tiles drawn from the same deck).
+        discards, calls = _simulate_turns(deck, subject_seat, waits, with_calls)
+
+        # 3. Enforce the requested furiten state on the subject's own pond while
+        #    keeping the pond counts plausible.
+        discards = _enforce_furiten(deck, discards, subject_seat, waits, furiten)
+
+        # 4. Safety guard for the physical 4-copies limit.
+        if _over_four(hand, waits, discards, calls):
             continue
-
-        # 3. Build discard ponds. The wall face after dealing is ``deck``.
-        discards = _simulate_discards(
-            deck, hands, subject_seat, waits, furiten=furiten
-        )
-
-        # 4. Exposed melds (calls) drawn from the remaining wall face.
-        calls: list[dict] = []
-        if with_calls:
-            calls = _build_calls(deck, hands, subject_seat, others, waits)
-            # A call can double-count tiles in a way that looks like >4 copies
-            # on the table; drop the calls if that happens so the scenario stays
-            # physically possible.
-            if _over_four(hand, waits, discards, calls):
-                calls = []
 
         return _assemble(
             subject_seat, hand, waits, label, discards, calls,
@@ -114,143 +104,113 @@ def _canonical(deck: TileDeck, hand: list[str], waits: list[str]) -> list[str]:
     return [w for w in waits if c[w] < 4]
 
 
-def _simulate_discards(
-    deck: TileDeck,
-    hands: dict[str, list[str]],
-    subject_seat: str,
-    waits: list[str],
-    furiten: bool | None,
-) -> dict[str, list[str]]:
-    """Produce a globally-consistent pond per player, honouring the furiten flag.
-
-    Every pond tile is drawn (and removed) from ``deck``, so no tile exceeds
-    four copies across the whole table. The subject's own pond is built first so
-    the waits can be reserved before the other seats draw.
-    """
-    ponds: dict[str, list[str]] = {}
-    subject_target = _valid_subject_target(deck, subject_seat, waits, furiten)
-    for seat in _SEATS:
-        if seat == subject_seat:
-            ponds[seat] = _build_subject_pond(deck, waits, subject_target)
-        else:
-            n = random.randint(1, 2)
-            ponds[seat] = deck.take_random(n)
-    return ponds
+#: Turn order (the round wind East is the dealer / first player).
+_SEAT_ORDER = ["East", "South", "West", "North"]
 
 
-def _valid_subject_target(
+def _simulate_turns(
     deck: TileDeck,
     subject_seat: str,
     waits: list[str],
-    furiten: bool | None,
-) -> bool:
-    """Decide whether the subject pond should contain every wait tile.
+    with_calls: bool,
+) -> tuple[dict[str, list[str]], list[dict]]:
+    """Walk a slice of turns, drawing+discarding and applying open calls.
 
-    Returns True when that is physically possible (enough copies remain).
+    A full round deals one draw+discard to each seat in order. When a discard is
+    claimed by an open call (pon/chi/kan) the tile leaves the discarder's pond,
+    the caller melds it and then discards (so the caller gains an extra turn),
+    and the turn moves past the caller. This makes pond sizes differ naturally
+    without ever exceeding four copies of any tile.
+
+    Returns ``(discards, calls)``.
     """
-    wanted = furiten
-    if wanted is None:
-        wanted = random.random() < 0.5
-    if wanted and all(deck.available(w) >= 1 for w in waits):
-        return True
-    if wanted:
-        # Not enough copies remain to place every wait; force non-furiten.
-        return False
-    return False
+    discards: dict[str, list[str]] = {seat: [] for seat in _SEAT_ORDER}
+    calls: list[dict] = []
+
+    total_target = random.randint(10, 18)
+    max_calls = random.choice([1, 1, 2])
+    made = 0
+    guard = 0
+    while made < total_target and guard < 600:
+        guard += 1
+        seat = _SEAT_ORDER[guard % len(_SEAT_ORDER)]
+        tile = deck.pop_tile()
+        if tile is None:
+            break
+
+        claimed = (
+            with_calls
+            and len(calls) < max_calls
+            and random.random() < 0.55
+        )
+        if claimed:
+            call = _make_call(deck, seat, tile, subject_seat)
+            if call:
+                calls.append(call)
+                # The caller discards a tile of their own afterward.
+                extra = deck.pop_tile()
+                if extra is not None:
+                    discards[call["by"]].append(extra)
+                    made += 1
+                made += 1
+                continue
+
+        discards[seat].append(tile)
+        made += 1
+
+    return discards, calls
 
 
-def _build_subject_pond(deck: TileDeck, waits: list[str], contain_waits: bool) -> list[str]:
-    pond: list[str] = []
-    if contain_waits:
-        for w in waits:
-            if deck.take(w, 1):
-                pond.append(w)
-        # Top up with a couple of random tiles so the pond doesn't look empty.
-        extra = deck.take_random(random.randint(0, 2))
-        pond.extend(extra)
-    else:
-        # Draw random tiles but never the waits.
-        n = random.randint(1, 2)
-        for _ in range(n):
-            t = _pop_non_wait(deck, waits)
-            if t is None:
-                break
-            pond.append(t)
-    return pond
+def _make_call(
+    deck: TileDeck, discarder: str, tile: str, subject_seat: str
+) -> dict | None:
+    """Build a feasible open call on ``tile`` by a non-subject opponent.
 
+    Returns the call dict, or ``None`` when no opponent can legally form it.
+    ``by`` is the caller; ``from`` is the player who discarded the tile.
+    """
+    candidates = [s for s in _SEAT_ORDER if s != discarder and s != subject_seat]
+    if not candidates:
+        return None
+    random.shuffle(candidates)
+    caller = candidates[0]
+    options = ["Pon", "Kan"]
+    if not _is_honor(tile):
+        options.append("Chi")
+    random.shuffle(options)
 
-def _pop_non_wait(deck: TileDeck, excluded: list[str]) -> str | None:
-    for _ in range(20):
-        t = deck.pop_tile()
-        if t is None:
-            return None
-        if t not in excluded:
-            return t
-        deck.put(t, 1)  # put back and try another
+    # Try each option until one is buildable.
+    for kind in options:
+        if kind == "Pon":
+            if deck.available(tile) < 2:
+                continue
+            deck.take(tile, 2)
+            return _call("Pon", caller, discarder, [tile, tile, tile], False)
+        if kind == "Chi":
+            tiles = _build_chi(deck, tile)
+            if tiles is None:
+                continue
+            return _call("Chi", caller, discarder, tiles, False)
+        if kind == "Kan":
+            if deck.available(tile) < 3:
+                continue
+            closed = random.random() < 0.5
+            if closed:
+                deck.take(tile, 3)
+                return _call("Kan", caller, discarder, [tile, tile, tile, tile], True)
+            deck.take(tile, 2)
+            return _call("Kan", caller, discarder, [tile, tile, tile], False)
     return None
 
 
-def _build_calls(
-    deck: TileDeck,
-    hands: dict[str, list[str]],
-    subject_seat: str,
-    others: list[str],
-    waits: list[str],
-) -> list[dict]:
-    """Create 0-2 exposed melds with caller / source / closed-kan info."""
-    calls: list[dict] = []
-    prefer = random.choice([True, False])
-    call_tile = None
-    if prefer:
-        # Use a wait tile someone else discarded toward the subject.
-        for w in waits:
-            if deck.available(w) > 0 and hands.get(subject_seat, []).count(w) >= 2:
-                call_tile = w
-                break
-    if call_tile is None:
-        # Fall back to any tile present in a non-subject hand or deck.
-        candidates = [t for t, c in deck._counter.items() if c > 0]
-        if candidates:
-            call_tile = random.choice(candidates)
-
-    if call_tile is None:
-        return calls
-
-    maker = random.choice(others)
-    caller = subject_seat
-    kind = random.choice(["Pon", "Chi", "Kan"])
-    if kind == "Chi":
-        # A chi is a sequence; we can't always build one from a single tile.
-        tiles = _build_chi(deck, call_tile)
-        if tiles is None:
-            kind = "Pon"
-    if kind == "Pon":
-        tiles = [call_tile, call_tile, call_tile]
-        if not deck.take(call_tile, 2):
-            return calls  # unable to supply the pair
-    if kind == "Kan":
-        closed = random.random() < 0.5
-        if closed:
-            if not deck.take(call_tile, 3):
-                return calls
-            tiles = [call_tile, call_tile, call_tile, call_tile]
-        else:
-            if not deck.take(call_tile, 2):
-                return calls
-            tiles = [call_tile, call_tile, call_tile]
-    else:
-        closed = False
-
-    calls.append(
-        {
-            "type": kind,
-            "by": caller,
-            "from": maker,
-            "tiles": sort_tiles(tiles),
-            "closed": bool(closed),
-        }
-    )
-    return calls
+def _call(typ: str, by: str, from_: str, tiles: list[str], closed: bool) -> dict:
+    return {
+        "type": typ,
+        "by": by,
+        "from": from_,
+        "tiles": sort_tiles(tiles),
+        "closed": bool(closed),
+    }
 
 
 def _build_chi(deck: TileDeck, tile: str) -> list[str] | None:
@@ -270,6 +230,36 @@ def _build_chi(deck: TileDeck, tile: str) -> list[str] | None:
 
 def _is_honor(tile: str) -> bool:
     return tile[1] == "z"
+
+
+def _enforce_furiten(
+    deck: TileDeck,
+    discards: dict[str, list[str]],
+    subject_seat: str,
+    waits: list[str],
+    furiten: bool | None,
+) -> dict[str, list[str]]:
+    """Adjust the subject's pond so it contains (or omits) every wait tile.
+
+    When ``furiten`` is True the subject has previously discarded every wait
+    tile; when False none of them are present. Missing tiles are taken from the
+    deck, so the 4-copies limit is never exceeded.
+    """
+    pond = discards[subject_seat]
+    wanted = furiten if furiten is not None else random.random() < 0.5
+
+    if wanted:
+        # Remove any wait tiles, then re-add them once from the deck.
+        pond[:] = [t for t in pond if t not in waits]
+        for w in waits:
+            if deck.available(w) >= 1:
+                deck.take(w, 1)
+                pond.append(w)
+    else:
+        pond[:] = [t for t in pond if t not in waits]
+        # Top up so the pond isn't empty.
+        pond.extend(deck.take_random(max(0, random.randint(1, 2) - len(pond))))
+    return discards
 
 
 def _assemble(
