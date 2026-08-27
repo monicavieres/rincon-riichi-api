@@ -75,6 +75,18 @@ def test_wait_drills_true_waits():
             assert sorted(get_waits(q["hand"])) == sorted(q["waits"]), drill
 
 
+def test_waits_single_tile_answer_is_a_real_wait():
+    for q in build_questions("waits", 30):
+        assert len(q["hand"]) == 13
+        # the correct answer must actually complete the hand
+        assert q["answer"] in q["waits"]
+        assert sorted(get_waits(q["hand"])) == sorted(q["waits"])
+        # distractors must not also be winning tiles
+        for choice in q["choices"]:
+            if choice != q["answer"]:
+                assert choice not in q["waits"]
+
+
 def test_han_answer_matches_han():
     for q in build_questions("han", 20):
         assert q["answer"] == str(q["han"])

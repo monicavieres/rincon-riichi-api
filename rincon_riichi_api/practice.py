@@ -158,6 +158,49 @@ def build_wait_questions(count: int, multi: bool) -> list[dict]:
     return out
 
 
+def build_wait_tile_questions(count: int) -> list[dict]:
+    """Single-choice questions naming ONE winning tile (the old ``waits`` drill).
+
+    The correct choice is a single winning tile; the distractors are tiles that
+    do NOT complete the hand, so the exercise stays unambiguous.
+    """
+    keys = list(WAIT_TYPE_NAMES.keys())
+    out: list[dict] = []
+    seen: set[str] = set()
+    guard = 0
+    while len(out) < count and guard < count * 80:
+        guard += 1
+        key = random.choice(keys)
+        q = _wait_question(key, _random_suit())
+        if not q:
+            continue
+        sig = "|".join(q["hand"])
+        if sig in seen:
+            continue
+        seen.add(sig)
+        waits = q["waits"]
+        answer = random.choice(waits)
+        distract = [t for t in _candidate_tiles(q["hand"]) if t not in waits]
+        random.shuffle(distract)
+        choices = [answer]
+        for d in distract:
+            if len(choices) >= 6:
+                break
+            choices.append(d)
+        out.append(
+            {
+                "hand": q["hand"],
+                "waits": waits,
+                "wait_name": q["wait_name"],
+                "wait_key": q["wait_key"],
+                "choices": _shuffle(choices),
+                "answer": answer,
+                "explain": _wait_explain(q["wait_name"], waits),
+            }
+        )
+    return out
+
+
 def _name_choices(correct_key: str, count: int) -> list[str]:
     pool = [k for k in WAIT_TYPE_NAMES if k != correct_key]
     random.shuffle(pool)
@@ -1016,7 +1059,7 @@ def _shuffle(items: list) -> list:
 # Dispatcher
 # ---------------------------------------------------------------------------
 _ACTIONS = {
-    "waits": lambda q, c: build_wait_questions(q, False),
+    "waits": lambda q, c: build_wait_tile_questions(q),
     "esperaTipo": lambda q, c: build_wait_questions(q, False),
     "esperaFichas": lambda q, c: build_wait_questions(q, True),
     "han": lambda q, c: build_han_questions(q),
