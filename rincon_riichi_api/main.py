@@ -16,6 +16,7 @@ from .generate import (
 )
 from .hand import can_win, get_waits, is_tenpai, wait_info
 from .models import GenerateHandRequest, GenerateHandResponse, HandRequest, ScoreRequest
+from .practice import DRILLS, build_questions
 from .scoring import score as score_hand
 from .scoring import value_table
 from .table import deal_table, status
@@ -71,6 +72,8 @@ def root() -> dict:
             "/yaku/detect",
             "/table/deal",
             "/table/discards",
+            "/practice",
+            "/furiten/generate",
         ],
     }
 
@@ -171,3 +174,41 @@ def table_discards(with_honors: bool = True, turns: int = 6) -> dict:
     result = simulate_discards(table, turns=turns)
     result["table"] = status(table)
     return result
+
+
+# ---- Practice drills -------------------------------------------------------
+@app.get("/practice")
+def practice(drill: str, count: int = 10) -> dict:
+    """Generate a batch of practice questions for a drill module.
+
+    ``drill`` is one of the allowed module keys (see ``DRILLS``). Returned
+    questions are self-contained and rendered directly by the site.
+    """
+    if drill not in DRILLS:
+        raise HTTPException(status_code=400, detail=f"unknown drill: {drill}")
+    try:
+        questions = build_questions(drill, count)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"drill": drill, "count": len(questions), "questions": questions}
+
+
+@app.get("/furiten/generate")
+def furiten_generate(
+    wait_type: str | None = None,
+    subject_seat: str | None = None,
+    furiten: bool | None = None,
+    with_calls: bool = True,
+) -> dict:
+    """Generate a four-player furiten drill snapshot."""
+    from .furiten import generate_furiten
+
+    try:
+        return generate_furiten(
+            wait_type=wait_type,
+            subject_seat=subject_seat,
+            furiten=furiten,
+            with_calls=with_calls,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc

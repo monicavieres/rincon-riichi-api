@@ -67,3 +67,95 @@ def count_tiles(tiles: list[str]) -> dict[str, int]:
     for tile in tiles:
         counts[tile] = counts.get(tile, 0) + 1
     return counts
+
+
+def max_copies(tiles: list[str]) -> int:
+    """Return the number of copies of the most frequent tile in ``tiles``."""
+    counts = count_tiles(tiles)
+    return max(counts.values(), default=0)
+
+
+def assert_at_most_four(tiles: list[str]) -> list[str]:
+    """Raise if any tile appears more than 4 times (physically impossible).
+
+    Returns the input list unchanged so it can be used as an inline guard.
+    """
+    for tile, count in count_tiles(tiles).items():
+        if count > 4:
+            raise ValueError(f"more than 4 copies of {tile!r} ({count})")
+    return tiles
+
+
+class TileDeck:
+    """A drawable multiset of tiles that never exceeds 4 copies of one tile.
+
+    Backed by a ``Counter`` so generators can draw realistic hands without
+    ever violating the physical 4-per-tile limit.
+    """
+
+    def __init__(self, with_honors: bool = True, include_aka: bool = True) -> None:
+        from .table import SIMPLE_WALL, FULL_WALL  # local: avoid circular import
+
+        base = FULL_WALL if with_honors else SIMPLE_WALL
+        self._counter = count_tiles(base)
+        if not include_aka:
+            # aka (0x) counts as an extra 5x; kept only when include_aka.
+            for t in ("0m", "0p", "0s"):
+                self._counter.pop(t, None)
+        self._total = sum(self._counter.values())
+
+    @property
+    def remaining(self) -> int:
+        return self._total
+
+    def copy(self) -> "TileDeck":
+        new = TileDeck.__new__(TileDeck)
+        new._counter = dict(self._counter)
+        new._total = self._total
+        return new
+
+    def available(self, tile: str) -> int:
+        return self._counter.get(tile, 0)
+
+    def take(self, tile: str, count: int = 1) -> bool:
+        """Remove ``count`` copies of ``tile``; return False if unavailable."""
+        have = self._counter.get(tile, 0)
+        if have < count:
+            return False
+        self._counter[tile] = have - count
+        self._total -= count
+        return True
+
+    def put(self, tile: str, count: int = 1) -> None:
+        self._counter[tile] = self._counter.get(tile, 0) + count
+        self._total += count
+
+    def draw(self, tile: str) -> str | None:
+        return tile if self.take(tile, 1) else None
+
+    def pop_tile(self) -> str | None:
+        """Pop one tile at random (returns None when empty)."""
+        import random
+
+        candidates = [t for t, c in self._counter.items() if c > 0]
+        if not candidates:
+            return None
+        tile = random.choice(candidates)
+        self.take(tile, 1)
+        return tile
+
+    def take_random(self, count: int) -> list[str]:
+        """Pop ``count`` random tiles (as many as available)."""
+        out: list[str] = []
+        for _ in range(count):
+            t = self.pop_tile()
+            if t is None:
+                break
+            out.append(t)
+        return out
+
+    def remaining_tiles(self) -> list[str]:
+        out: list[str] = []
+        for tile, c in self._counter.items():
+            out.extend([tile] * c)
+        return out
