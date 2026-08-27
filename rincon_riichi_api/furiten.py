@@ -243,7 +243,8 @@ def _enforce_furiten(
 
     When ``furiten`` is True the subject has previously discarded every wait
     tile; when False none of them are present. Missing tiles are taken from the
-    deck, so the 4-copies limit is never exceeded.
+    deck, so the 4-copies limit is never exceeded. The pond is topped up to a
+    plausible minimum so it doesn't look empty.
     """
     pond = discards[subject_seat]
     wanted = furiten if furiten is not None else random.random() < 0.5
@@ -257,8 +258,12 @@ def _enforce_furiten(
                 pond.append(w)
     else:
         pond[:] = [t for t in pond if t not in waits]
-        # Top up so the pond isn't empty.
-        pond.extend(deck.take_random(max(0, random.randint(1, 2) - len(pond))))
+
+    # Top up so the subject has discarded a reasonable number of tiles.
+    minimum = random.randint(2, 3)
+    needed = minimum - len(pond)
+    if needed > 0:
+        pond.extend(deck.take_random(needed))
     return discards
 
 
