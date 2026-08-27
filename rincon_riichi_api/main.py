@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from . import __version__
 from .generate import (
@@ -23,6 +26,30 @@ app = FastAPI(
     title="Rincón Riichi API",
     description="Riichi Mahjong hand engine and table simulation for Rincón Riichi.",
     version=__version__,
+)
+
+# Allow the Rincón Riichi site (GitHub Pages + local dev) to call this API.
+_origins = [
+    "https://monicavieres.github.io",
+    "https://monicavieres.github.io/rincon-riichi",
+    "http://127.0.0.1:5500",
+    "http://127.0.0.1:5501",
+    "http://127.0.0.1:8000",
+    "http://localhost:5500",
+    "http://localhost:5501",
+    "http://localhost:8900",
+    "http://127.0.0.1:8900",
+]
+_extra = os.environ.get("ALLOWED_ORIGINS")
+if _extra:
+    _origins.extend(o.strip() for o in _extra.split(",") if o.strip())
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
