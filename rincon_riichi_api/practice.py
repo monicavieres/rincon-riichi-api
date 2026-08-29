@@ -584,7 +584,7 @@ def build_valores_questions(count: int) -> list[dict]:
     while len(out) < count and guard < count * 80:
         guard += 1
         han = random.choice([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
-        fu = random.choice([20, 25, 30, 40, 50, 60, 70, 80, 90, 100, 110])
+        fu = random.choice([20, 25, 30, 40, 50, 60, 70])
         if han == 1 and fu < 30:
             continue
         if han >= 4 and fu == 20:
@@ -630,7 +630,7 @@ def build_valores_distractors(correct: str, han: int, fu: int, dealer: bool, win
         (max(1, han - 1), fu, dealer, win, honba),
         (han + 1, fu, dealer, win, honba),
         (han, max(20, fu - 10), dealer, win, honba),
-        (han, fu + 10, dealer, win, honba),
+        (han, min(70, fu + 10), dealer, win, honba),
         (han, fu, not dealer, win, honba),
         (han, fu, dealer, "Tsumo" if win == "Ron" else "Ron", honba),
         (han, fu, dealer, win, min(3, honba + 1)),
