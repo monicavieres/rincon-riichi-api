@@ -64,10 +64,10 @@ def test_furiten_ponds_are_substantial_and_varied():
     for _ in range(40):
         fur = generate_furiten()
         sizes = [len(d) for d in fur["discards"].values()]
-        # Every player should have made several discards (a couple of tiles at
-        # least), and no pond should be unreasonably long.
-        assert min(sizes) >= 1
-        assert max(sizes) <= 10
+        # Every player should discard enough tiles to form a pond (several rows
+        # of six), and no pond should be unreasonably long.
+        assert min(sizes) >= 4
+        assert max(sizes) <= 12
 
 
 def test_furiten_called_tile_absent_from_discarder_pond():

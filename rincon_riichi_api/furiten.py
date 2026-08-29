@@ -127,7 +127,7 @@ def _simulate_turns(
     discards: dict[str, list[str]] = {seat: [] for seat in _SEAT_ORDER}
     calls: list[dict] = []
 
-    total_target = random.randint(10, 18)
+    total_target = random.randint(26, 40)
     max_calls = random.choice([1, 1, 2])
     made = 0
     guard = 0
